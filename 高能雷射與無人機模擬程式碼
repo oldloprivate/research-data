@@ -1,0 +1,157 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from collections import defaultdict
+
+# 模擬參數
+NUM_UAVS = 10
+NUM_ROUNDS = 30
+ROUND_DURATION = 7200  # 2小時 = 7200秒
+UAV_INTERVAL = 30  # 每30秒出現一台無人機
+NUM_LASERS = 3  # 高能雷射數量
+
+# 獎勵設置
+REWARDS = {'miss': 0, 'hit': 3, 'kill': 6}
+
+def simulate_round():
+    uavs = list(range(NUM_UAVS))
+    results = defaultdict(list)
+    time = 0
+    current_uavs = [None] * NUM_LASERS
+
+    while time < ROUND_DURATION:
+        if time % UAV_INTERVAL == 0 and uavs:
+            for i in range(NUM_LASERS):
+                if current_uavs[i] is None and uavs:
+                    current_uavs[i] = uavs.pop(0)
+
+        for i in range(NUM_LASERS):
+            if current_uavs[i] is not None:
+                action = np.random.choice(['miss', 'hit', 'kill'], p=[0.105540897097625, 0.364116094986807, 0.530343007915567])
+                results[current_uavs[i]].append(action)
+
+                if action == 'kill':
+                    current_uavs[i] = None
+
+        time += 1
+
+    return results
+
+def run_simulation():
+    all_rounds = []
+    for _ in range(NUM_ROUNDS):
+        all_rounds.append(simulate_round())
+    return all_rounds
+
+def analyze_results(all_rounds):
+    uav_stats = defaultdict(lambda: defaultdict(list))
+    for round_results in all_rounds:
+        for uav in range(NUM_UAVS):
+            actions = round_results.get(uav, [])
+            miss_count = actions.count('miss')
+            hit_count = actions.count('hit')
+            kill_count = actions.count('kill')
+            total_shots = len(actions)
+
+            uav_stats[uav]['miss'].append(miss_count)
+            uav_stats[uav]['hit'].append(hit_count)
+            uav_stats[uav]['kill'].append(kill_count)
+            uav_stats[uav]['total_shots'].append(total_shots)
+
+    return uav_stats
+
+def calculate_probabilities(uav_stats):
+    prob_stats = {}
+    for uav in range(NUM_UAVS):
+        stats = uav_stats[uav]
+        total_shots = sum(stats['total_shots'])
+        if total_shots == 0:
+            prob_stats[uav] = {'miss': 0, 'hit': 0, 'kill': 0}
+        else:
+            prob_stats[uav] = {
+                'miss': sum(stats['miss']) / total_shots,
+                'hit': sum(stats['hit']) / total_shots,
+                'kill': sum(stats['kill']) / total_shots
+            }
+    return prob_stats
+
+def calculate_discounted_return(prob_stats, discount_factor):
+    returns = {}
+    for uav in range(NUM_UAVS):
+        probs = prob_stats[uav]
+        total_return = sum(REWARDS[action] * prob * discount_factor for action, prob in probs.items())
+        returns[uav] = total_return
+    return returns
+
+def plot_results(uav_stats, prob_stats, discount_returns):
+    # 繪製順序圖
+    fig, ax = plt.subplots(figsize=(15, 8))
+    for uav in range(NUM_UAVS):
+        ax.plot(uav_stats[uav]['total_shots'], label=f'UAV {uav+1}')
+    ax.set_xlabel('回合')
+    ax.set_ylabel('射擊次數')
+    ax.set_title('每回合各無人機被射擊次數')
+    ax.legend()
+    plt.show()
+
+    # 繪製機率圖
+    fig, ax = plt.subplots(figsize=(15, 8))
+    x = range(NUM_UAVS)
+    width = 0.25
+    bars_miss = ax.bar([i-width for i in x], [prob_stats[uav]['miss'] for uav in range(NUM_UAVS)], width, label='Miss')
+    bars_hit = ax.bar(x, [prob_stats[uav]['hit'] for uav in range(NUM_UAVS)], width, label='Hit')
+    bars_kill = ax.bar([i+width for i in x], [prob_stats[uav]['kill'] for uav in range(NUM_UAVS)], width, label='Kill')
+    ax.set_xlabel('無人機編號')
+    ax.set_ylabel('機率')
+    ax.set_title('各無人機的 Miss/Hit/Kill 機率')
+    ax.set_xticks(x)
+    ax.set_xticklabels([f'UAV {i+1}' for i in range(NUM_UAVS)])
+    ax.legend()
+
+    for bar in bars_miss + bars_hit + bars_kill:
+        yval = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2, yval + 0.01, f'{yval:.2f}', ha='center', va='bottom')
+
+    plt.show()
+
+    # 繪製折扣回報圖
+    fig, ax = plt.subplots(figsize=(15, 8))
+    for df, returns in discount_returns.items():
+        ax.plot(range(1, NUM_UAVS+1), [returns[uav] for uav in range(NUM_UAVS)], marker='o', label=f'衰退率 {df}')
+    ax.set_xlabel('無人機編號')
+    ax.set_ylabel('折扣回報值')
+    ax.set_title('不同衰退率下的無人機折扣回報')
+    ax.legend()
+    plt.show()
+
+def main():
+    all_rounds = run_simulation()
+    uav_stats = analyze_results(all_rounds)
+    prob_stats = calculate_probabilities(uav_stats)
+
+    discount_factors = [0.2, 0.5, 0.8, 1.0]
+    discount_returns = {df: calculate_discounted_return(prob_stats, df) for df in discount_factors}
+
+    plot_results(uav_stats, prob_stats, discount_returns)
+
+    # 顯示統計數據表格
+    df_stats = pd.DataFrame(prob_stats).T
+    df_stats.index.name = '無人機'
+    df_stats.columns = ['Miss率', 'Hit率', 'Kill率']
+    print("\n各無人機的 Miss/Hit/Kill 機率:")
+    print(df_stats)
+
+    # 顯示折扣回報表格
+    df_returns = pd.DataFrame(discount_returns)
+    df_returns.index.name = '無人機'
+    df_returns.columns = [f'衰退率 {df}' for df in discount_factors]
+    print("\n各衰退率下的折扣回報:")
+    print(df_returns)
+
+    # 匯出到 Excel
+    with pd.ExcelWriter('/content/uav_simulation_results.xlsx') as writer:
+        df_stats.to_excel(writer, sheet_name='機率統計')
+        df_returns.to_excel(writer, sheet_name='折扣回報')
+
+if __name__ == "__main__":
+    main()
